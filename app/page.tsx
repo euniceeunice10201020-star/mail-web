@@ -56,6 +56,8 @@ type TabKey =
   | "businessCompliance"
   | "files";
 
+type ViewMode = "edit" | "profile";
+
 const initialEntities: Entity[] = [
   {
     id: "ent_1",
@@ -142,6 +144,7 @@ export default function Page() {
     return storedEntities?.[0]?.id ?? initialEntities[0].id;
   });
   const [activeTab, setActiveTab] = useState<TabKey>("basic");
+  const [viewMode, setViewMode] = useState<ViewMode>("edit");
 
   const selectedEntity = useMemo(
     () => entities.find((entity) => entity.id === selectedEntityId),
@@ -191,6 +194,90 @@ export default function Page() {
 
     window.localStorage.setItem(selectedEntityStorageKey, selectedEntityId);
   }, [entities, selectedEntityId]);
+
+
+  const toDisplayValue = (value: string | number | undefined) =>
+    value === undefined || value === null || value === "" ? "" : String(value);
+
+  const profileSections = useMemo(
+    () => [
+      {
+        title: "Basic Info",
+        fields: [
+          { label: "Legal Entity Name", value: selectedEntity?.name },
+          { label: "Trading Name", value: selectedEntity?.tradingName },
+          { label: "Registration Number", value: selectedEntity?.registrationNumber },
+          { label: "Country", value: selectedEntity?.country },
+          { label: "Date of Incorporation", value: selectedEntity?.dateOfIncorporation },
+          { label: "Legal Form", value: selectedEntity?.legalForm },
+          { label: "Registered Address", value: selectedEntity?.registeredAddress },
+          { label: "Operating Address", value: selectedEntity?.operatingAddress },
+          { label: "Website URL", value: selectedEntity?.websiteUrl }
+        ]
+      },
+      {
+        title: "Key Person",
+        fields: [
+          { label: "Full Name", value: selectedEntity?.keyPerson?.fullName },
+          { label: "Date of Birth", value: selectedEntity?.keyPerson?.dateOfBirth },
+          { label: "Nationality", value: selectedEntity?.keyPerson?.nationality },
+          { label: "Country of Residence", value: selectedEntity?.keyPerson?.countryOfResidence },
+          { label: "Role Summary", value: selectedEntity?.keyPerson?.roleSummary },
+          { label: "Ownership Percentage", value: selectedEntity?.keyPerson?.ownershipPercentage },
+          { label: "ID Document Type", value: selectedEntity?.keyPerson?.idDocumentType },
+          { label: "ID Document Number", value: selectedEntity?.keyPerson?.idDocumentNumber }
+        ]
+      },
+      {
+        title: "Tax Info",
+        fields: [
+          { label: "Tax ID", value: selectedEntity?.taxInfo?.taxId },
+          { label: "VAT Number", value: selectedEntity?.taxInfo?.vatNumber }
+        ]
+      },
+      {
+        title: "Banking Info",
+        fields: [
+          { label: "Bank Name", value: selectedEntity?.banking?.bankName },
+          { label: "Bank Address", value: selectedEntity?.banking?.bankAddress },
+          { label: "Account Name", value: selectedEntity?.banking?.accountName },
+          { label: "Account Number", value: selectedEntity?.banking?.ibanOrAccountNumber },
+          { label: "SWIFT", value: selectedEntity?.banking?.swift },
+          { label: "Settlement Currency", value: selectedEntity?.banking?.settlementCurrency }
+        ]
+      },
+      {
+        title: "Business & Compliance",
+        fields: [
+          { label: "Business Description", value: selectedEntity?.businessCompliance?.businessDescription },
+          { label: "Products / Services", value: selectedEntity?.businessCompliance?.productsServices },
+          { label: "Business Model", value: selectedEntity?.businessCompliance?.businessModel },
+          { label: "Target Markets", value: selectedEntity?.businessCompliance?.targetMarkets },
+          { label: "Expected Monthly Volume", value: selectedEntity?.businessCompliance?.expectedMonthlyVolume },
+          { label: "Average Transaction Size", value: selectedEntity?.businessCompliance?.averageTransactionSize },
+          { label: "Chargeback Ratio", value: selectedEntity?.businessCompliance?.chargebackRatio },
+          { label: "Compliance Statement", value: selectedEntity?.businessCompliance?.complianceStatement }
+        ]
+      }
+    ],
+    [selectedEntity]
+  );
+
+  const buildSectionText = (title: string, fields: Array<{ label: string; value: string | number | undefined }>) =>
+    [title, ...fields.map((field) => `${field.label}: ${toDisplayValue(field.value)}`)].join("\n");
+
+  const copyText = async (text: string) => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(text);
+  };
+
+  const fullProfileText = useMemo(
+    () => profileSections.map((section) => buildSectionText(section.title, section.fields)).join("\n\n"),
+    [profileSections]
+  );
 
   if (!selectedEntity) {
     return <main className="p-6">No entity selected.</main>;
@@ -243,22 +330,51 @@ export default function Page() {
             </p>
           </header>
 
-          <nav className="mb-4 flex flex-wrap gap-2">
-            {tabs.map((tab) => (
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <div className="flex gap-2">
               <button
-                key={tab.key}
                 className={`rounded px-3 py-1.5 text-sm ${
-                  tab.key === activeTab
+                  viewMode === "edit"
                     ? "bg-slate-900 text-white"
                     : "border border-slate-300 bg-white text-slate-700"
                 }`}
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() => setViewMode("edit")}
                 type="button"
               >
-                {tab.label}
+                Edit view
               </button>
-            ))}
-          </nav>
+              <button
+                className={`rounded px-3 py-1.5 text-sm ${
+                  viewMode === "profile"
+                    ? "bg-slate-900 text-white"
+                    : "border border-slate-300 bg-white text-slate-700"
+                }`}
+                onClick={() => setViewMode("profile")}
+                type="button"
+              >
+                Profile view
+              </button>
+            </div>
+          </div>
+
+          {viewMode === "edit" ? (
+            <>
+              <nav className="mb-4 flex flex-wrap gap-2">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    className={`rounded px-3 py-1.5 text-sm ${
+                      tab.key === activeTab
+                        ? "bg-slate-900 text-white"
+                        : "border border-slate-300 bg-white text-slate-700"
+                    }`}
+                    onClick={() => setActiveTab(tab.key)}
+                    type="button"
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </nav>
 
           {activeTab === "basic" && (
             <div className="grid gap-4 md:grid-cols-2">
@@ -729,6 +845,51 @@ export default function Page() {
           {activeTab === "files" && (
             <div className="rounded border border-dashed border-slate-300 p-6 text-sm text-slate-600">
               Files section placeholder. We can implement uploads and document management later.
+            </div>
+          )}
+            </>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex justify-end">
+                <button
+                  className="rounded border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={() => copyText(fullProfileText)}
+                  type="button"
+                >
+                  Copy full profile
+                </button>
+              </div>
+
+              {profileSections.map((section) => {
+                const populatedFields = section.fields.filter((field) => toDisplayValue(field.value) !== "");
+                return (
+                  <div key={section.title} className="rounded border border-slate-200 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className={sectionTitleClass}>{section.title}</h3>
+                      <button
+                        className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                        onClick={() => copyText(buildSectionText(section.title, section.fields))}
+                        type="button"
+                      >
+                        Copy section
+                      </button>
+                    </div>
+
+                    {populatedFields.length === 0 ? (
+                      <p className="text-sm text-slate-500">No data available.</p>
+                    ) : (
+                      <dl className="grid gap-x-6 gap-y-2 md:grid-cols-[220px_1fr]">
+                        {populatedFields.map((field) => (
+                          <div key={field.label} className="contents">
+                            <dt className="text-sm font-medium text-slate-700">{field.label}</dt>
+                            <dd className="text-sm text-slate-900">{toDisplayValue(field.value)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
