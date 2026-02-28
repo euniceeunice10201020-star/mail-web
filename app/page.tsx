@@ -1,6 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+
+interface UploadedFile {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  uploadedAt: string;
+  text?: string;
+  status?: "idle" | "uploaded" | "extracted" | "error";
+  errorMessage?: string;
+}
 
 interface Entity {
   id: string;
@@ -46,6 +57,7 @@ interface Entity {
     complianceStatement?: string;
   };
   updatedAt?: string;
+  files?: UploadedFile[];
 }
 
 type TabKey =
@@ -57,6 +69,28 @@ type TabKey =
   | "files";
 
 type ViewMode = "edit" | "profile";
+
+
+type ExtractionResult = {
+  basicInfo?: {
+    legalName?: string;
+    registrationNumber?: string;
+    country?: string;
+    dateOfIncorporation?: string;
+    legalForm?: string;
+    registeredAddress?: string;
+  };
+  banking?: {
+    bankName?: string;
+    bankAddress?: string;
+    accountName?: string;
+    ibanOrAccountNumber?: string;
+    swift?: string;
+  };
+  keyPerson?: {
+    fullName?: string;
+  };
+};
 
 const initialEntities: Entity[] = [
   {
@@ -128,6 +162,71 @@ function createBlankEntity(): Entity {
     id: `ent_${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Date.now()}`,
     name: "New Entity",
     banking: { settlementCurrency: "USD" },
+    files: [],
+    updatedAt: new Date().toISOString()
+  };
+}
+
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(new Error("Could not read file"));
+    reader.readAsText(file);
+  });
+}
+
+async function extractTextFromFile(file: File): Promise<string> {
+  if (file.type.startsWith("text/") || file.name.match(/\.(txt|md|csv|json)$/i)) {
+    return readFileAsText(file);
+  }
+
+  if (file.type === "application/pdf" || file.name.toLowerCase().endswith(".pdf")) {
+    try {
+      return await readFileAsText(file);
+    } catch {
+      return "";
+    }
+  }
+
+  try {
+    return await readFileAsText(file);
+  } catch {
+    return "";
+  }
+}
+
+const isNonEmpty = (value: string | undefined) => Boolean(value && value.trim());
+
+function preferIncoming(current: string | undefined, incoming: string | undefined): string | undefined {
+  return isNonEmpty(incoming) ? incoming : current;
+}
+
+function applyExtractionToEntity(entity: Entity, extraction: ExtractionResult): Entity {
+  return {
+    ...entity,
+    name: preferIncoming(entity.name, extraction.basicInfo?.legalName) ?? entity.name,
+    registrationNumber: preferIncoming(entity.registrationNumber, extraction.basicInfo?.registrationNumber),
+    country: preferIncoming(entity.country, extraction.basicInfo?.country),
+    dateOfIncorporation: preferIncoming(entity.dateOfIncorporation, extraction.basicInfo?.dateOfIncorporation),
+    legalForm: preferIncoming(entity.legalForm, extraction.basicInfo?.legalForm),
+    registeredAddress: preferIncoming(entity.registeredAddress, extraction.basicInfo?.registeredAddress),
+    banking: {
+      ...entity.banking,
+      bankName: preferIncoming(entity.banking?.bankName, extraction.banking?.bankName),
+      bankAddress: preferIncoming(entity.banking?.bankAddress, extraction.banking?.bankAddress),
+      accountName: preferIncoming(entity.banking?.accountName, extraction.banking?.accountName),
+      ibanOrAccountNumber: preferIncoming(
+        entity.banking?.ibanOrAccountNumber,
+        extraction.banking?.ibanOrAccountNumber
+      ),
+      swift: preferIncoming(entity.banking?.swift, extraction.banking?.swift)
+    },
+    keyPerson: {
+      ...entity.keyPerson,
+      fullName: preferIncoming(entity.keyPerson?.fullName, extraction.keyPerson?.fullName)
+    },
     updatedAt: new Date().toISOString()
   };
 }
@@ -145,6 +244,8 @@ export default function Page() {
   });
   const [activeTab, setActiveTab] = useState<TabKey>("basic");
   const [viewMode, setViewMode] = useState<ViewMode>("edit");
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
 
   const selectedEntity = useMemo(
     () => entities.find((entity) => entity.id === selectedEntityId),
@@ -171,6 +272,102 @@ export default function Page() {
     setActiveTab("basic");
   };
 
+
+  const selectedFiles = selectedEntity?.files ?? [];
+  const hasAnyText = selectedFiles.some((file) => Boolean(file.text?.trim()));
+
+  const handleFileInputChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const inputFiles = Array.from(event.target.files ?? []);
+    if (inputFiles.length === 0) {
+      return;
+    }
+
+    setExtractError(null);
+
+    const uploadedFiles = await Promise.all(
+      inputFiles.map(async (file) => {
+        const baseFile: UploadedFile = {
+          id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          type: file.type || "application/octet-stream",
+          size: file.size,
+          uploadedAt: new Date().toISOString(),
+          status: "uploaded"
+        };
+
+        try {
+          const text = await extractTextFromFile(file);
+          return {
+            ...baseFile,
+            text,
+            status: text.trim() ? "uploaded" : "idle"
+          } as UploadedFile;
+        } catch (error) {
+          return {
+            ...baseFile,
+            text: "",
+            status: "error",
+            errorMessage: error instanceof Error ? error.message : "Failed to read file"
+          } as UploadedFile;
+        }
+      })
+    );
+
+    updateSelectedEntity((entity) => ({
+      ...entity,
+      files: [...(entity.files ?? []), ...uploadedFiles]
+    }));
+
+    event.target.value = "";
+  };
+
+  const handleExtractClick = async () => {
+    const filesWithText = selectedFiles.filter((file) => file.text?.trim());
+    if (filesWithText.length === 0) {
+      setExtractError("No extractable text found in uploaded files.");
+      return;
+    }
+
+    const combinedText = filesWithText
+      .map((file) => `----- FILE: ${file.name} -----\n${file.text?.trim()}\n`)
+      .join("\n");
+
+    setIsExtracting(true);
+    setExtractError(null);
+
+    try {
+      const response = await fetch("/api/extract-kyc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: combinedText })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Extraction failed with status ${response.status}`);
+      }
+
+      const extraction = (await response.json()) as ExtractionResult;
+
+      updateSelectedEntity((entity) => {
+        const mergedEntity = applyExtractionToEntity(entity, extraction);
+        return {
+          ...mergedEntity,
+          files: (mergedEntity.files ?? []).map((file) => ({
+            ...file,
+            status: file.status === "error" ? "error" : "extracted",
+            errorMessage: file.status === "error" ? file.errorMessage : undefined
+          }))
+        };
+      });
+
+      setExtractError(null);
+    } catch (error) {
+      setExtractError(error instanceof Error ? error.message : "Failed to extract fields from files.");
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -194,6 +391,10 @@ export default function Page() {
 
     window.localStorage.setItem(selectedEntityStorageKey, selectedEntityId);
   }, [entities, selectedEntityId]);
+
+  useEffect(() => {
+    setExtractError(null);
+  }, [selectedEntityId]);
 
 
   const toDisplayValue = (value: string | number | undefined) =>
@@ -843,8 +1044,58 @@ export default function Page() {
           )}
 
           {activeTab === "files" && (
-            <div className="rounded border border-dashed border-slate-300 p-6 text-sm text-slate-600">
-              Files section placeholder. We can implement uploads and document management later.
+            <div className="space-y-4">
+              <div className="rounded border border-slate-200 p-4">
+                <label className={labelClass}>
+                  Upload registration documents
+                  <input
+                    className={`${inputClass} mt-2`}
+                    type="file"
+                    multiple
+                    accept=".pdf,.txt,.md,.doc,.docx"
+                    onChange={handleFileInputChange}
+                  />
+                </label>
+
+                <div className="mt-4">
+                  <button
+                    className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                    disabled={isExtracting || !hasAnyText}
+                    onClick={handleExtractClick}
+                    type="button"
+                  >
+                    {isExtracting ? "Extracting..." : "Extract fields from files"}
+                  </button>
+                </div>
+
+                {extractError && <p className="mt-2 text-sm text-red-600">{extractError}</p>}
+              </div>
+
+              <div className="rounded border border-slate-200">
+                <div className="border-b border-slate-200 px-4 py-3">
+                  <h3 className={sectionTitleClass}>Uploaded files</h3>
+                </div>
+
+                {selectedFiles.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-slate-500">No files uploaded yet.</p>
+                ) : (
+                  <ul className="divide-y divide-slate-200">
+                    {selectedFiles.map((file) => (
+                      <li key={file.id} className="px-4 py-3 text-sm">
+                        <div className="grid gap-2 md:grid-cols-[2fr_100px_1.5fr_120px]">
+                          <p className="font-medium text-slate-900">{file.name}</p>
+                          <p className="text-slate-600">{Math.max(1, Math.round(file.size / 1024))} KB</p>
+                          <p className="text-slate-600">{file.type || "Unknown type"}</p>
+                          <p className="text-slate-700">{file.status || "idle"}</p>
+                        </div>
+                        {file.status === "error" && file.errorMessage && (
+                          <p className="mt-1 text-xs text-red-600">{file.errorMessage}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           )}
             </>
