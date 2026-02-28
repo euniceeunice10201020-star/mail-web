@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface Entity {
   id: string;
@@ -92,6 +92,34 @@ const inputClass =
   "mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 const labelClass = "block text-sm font-medium text-slate-700";
 const sectionTitleClass = "text-base font-semibold text-slate-900";
+const entitiesStorageKey = "kyc_entities";
+const selectedEntityStorageKey = "kyc_selected_entity";
+
+function loadStoredEntities(): Entity[] | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const rawEntities = window.localStorage.getItem(entitiesStorageKey);
+  if (!rawEntities) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawEntities);
+    return Array.isArray(parsed) ? (parsed as Entity[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadStoredSelectedEntityId(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.localStorage.getItem(selectedEntityStorageKey);
+}
 
 function createBlankEntity(): Entity {
   return {
@@ -103,8 +131,16 @@ function createBlankEntity(): Entity {
 }
 
 export default function Page() {
-  const [entities, setEntities] = useState<Entity[]>(initialEntities);
-  const [selectedEntityId, setSelectedEntityId] = useState<string>(initialEntities[0].id);
+  const [entities, setEntities] = useState<Entity[]>(() => loadStoredEntities() ?? initialEntities);
+  const [selectedEntityId, setSelectedEntityId] = useState<string>(() => {
+    const storedSelectedId = loadStoredSelectedEntityId();
+    if (storedSelectedId) {
+      return storedSelectedId;
+    }
+
+    const storedEntities = loadStoredEntities();
+    return storedEntities?.[0]?.id ?? initialEntities[0].id;
+  });
   const [activeTab, setActiveTab] = useState<TabKey>("basic");
 
   const selectedEntity = useMemo(
@@ -131,6 +167,30 @@ export default function Page() {
     setSelectedEntityId(newEntity.id);
     setActiveTab("basic");
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(entitiesStorageKey, JSON.stringify(entities));
+  }, [entities]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!entities.some((entity) => entity.id === selectedEntityId)) {
+      const fallbackId = entities[0]?.id;
+      if (fallbackId) {
+        setSelectedEntityId(fallbackId);
+      }
+      return;
+    }
+
+    window.localStorage.setItem(selectedEntityStorageKey, selectedEntityId);
+  }, [entities, selectedEntityId]);
 
   if (!selectedEntity) {
     return <main className="p-6">No entity selected.</main>;
